@@ -40,7 +40,7 @@ teams-manifest/
 ├── manifest.json # Teams app manifest with SSO configuration
 └── README.md     # Instructions for creating app package
 
-DEPLOYMENT.md     # Complete deployment guide
+MANAGED_IDENTITY_SETUP.md  # 🔧 CRITICAL: How to assign Managed Identity to App Service
 ```
 
 ## ⚙️ Requirements
@@ -124,11 +124,25 @@ Update `PUBLIC_BASE_URL` in `.env` with your ngrok URL.
 
 ## 🚀 Deployment
 
-See **[DEPLOYMENT.md](DEPLOYMENT.md)** for complete deployment instructions including:
+### ⚠️ CRITICAL FIRST STEP
 
+**Before deploying, you MUST assign the Managed Identity to your App Service:**
+
+👉 **See [MANAGED_IDENTITY_SETUP.md](MANAGED_IDENTITY_SETUP.md) for step-by-step instructions**
+
+Common error if skipped:
+```
+ConnectionRefusedError: [Errno 111] Connection refused
+HTTPConnectionPool(host='169.254.169.254', port=80): Max retries exceeded
+```
+
+### Full Deployment Guide
+
+Complete deployment instructions including:
+
+- ✅ **Managed Identity assignment** (MUST DO FIRST)
 - Azure AD App Registration configuration
 - OAuth Connection setup
-- Managed Identity configuration
 - Teams app package creation
 - Testing checklist
 - Troubleshooting guide
