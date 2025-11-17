@@ -157,6 +157,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Teams App Manifest (contains sensitive deployment info)
+teams-manifest/manifest.json
+teams-manifest/*.zip
+
 # Spyder project settings
 .spyderproject
 .spyproject

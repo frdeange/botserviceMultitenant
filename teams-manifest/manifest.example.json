@@ -1,0 +1,48 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "YOUR-BOT-APP-ID-HERE",
+  "packageName": "com.yourcompany.teamsssobot",
+  "developer": {
+    "name": "Your Company Name",
+    "websiteUrl": "https://www.yourcompany.com",
+    "privacyUrl": "https://www.yourcompany.com/privacy",
+    "termsOfUseUrl": "https://www.yourcompany.com/terms"
+  },
+  "name": {
+    "short": "Azure OpenAI Bot",
+    "full": "Teams SSO Bot with Azure OpenAI Integration"
+  },
+  "description": {
+    "short": "AI assistant powered by Azure OpenAI with SSO authentication",
+    "full": "An intelligent Teams bot that uses Single Sign-On authentication and Azure OpenAI to provide helpful AI-powered assistance. The bot supports multi-tenant scenarios and uses User-Assigned Managed Identity for secure Azure authentication."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#0078D4",
+  "bots": [
+    {
+      "botId": "YOUR-BOT-APP-ID-HERE",
+      "scopes": [
+        "personal"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "your-app-name.azurewebsites.net",
+    "token.botframework.com"
+  ],
+  "webApplicationInfo": {
+    "id": "YOUR-BOT-APP-ID-HERE",
+    "resource": "api://your-app-name.azurewebsites.net/YOUR-BOT-APP-ID-HERE"
+  }
+}

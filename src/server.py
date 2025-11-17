@@ -1,7 +1,8 @@
-"""HTTP server wiring for the Teams SSO bot."""
+"""HTTP server wiring for the Teams SSO bot with Azure OpenAI."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import List
 
@@ -29,10 +30,15 @@ class BotSettings:
 	client_secret: str | None
 	oauth_connection_name: str
 	public_base_url: str
+	azure_openai_endpoint: str
+	azure_openai_api_key: str
+	azure_openai_api_version: str
+	azure_openai_deployment_name: str
 	port: int = 8000
 	allowed_tenants: List[str] = field(default_factory=list)
 
 	def auth_type(self) -> AuthTypes:
+		"""Determine authentication type from app_type string."""
 		type_name = (self.app_type or "").lower()
 		if type_name in {"userassignedmsi", "user-assigned"}:
 			return AuthTypes.user_managed_identity
@@ -51,19 +57,26 @@ def _build_service_connection(settings: BotSettings) -> AgentAuthConfiguration:
 	)
 
 
-def _build_connection_manager(
-	settings: BotSettings,
-) -> Connections:
+def _build_connection_manager(settings: BotSettings) -> Connections:
+	"""Build MSAL connection manager with proper configuration for Managed Identity."""
 	service_connection = _build_service_connection(settings)
-	config_payload = {
-		"auth_type": service_connection.AUTH_TYPE,
-		"client_id": service_connection.CLIENT_ID,
-		"tenant_id": service_connection.TENANT_ID,
-		"client_secret": service_connection.CLIENT_SECRET,
-		"connection_name": service_connection.CONNECTION_NAME,
+	
+	# Build connection configuration dictionary with correct parameter names
+	connection_config = {
+		"SETTINGS": {
+			"auth_type": service_connection.AUTH_TYPE,
+			"client_id": service_connection.CLIENT_ID,
+			"tenant_id": service_connection.TENANT_ID,
+			"scopes": ["https://api.botframework.com/.default"],
+		}
 	}
+	
+	# Add client_secret only if not using Managed Identity
+	if service_connection.AUTH_TYPE == AuthTypes.client_secret:
+		connection_config["SETTINGS"]["client_secret"] = service_connection.CLIENT_SECRET
+	
 	return MsalConnectionManager(
-		connections_configurations={"SERVICE_CONNECTION": config_payload}
+		CONNECTIONS={"SERVICE_CONNECTION": connection_config}
 	)
 
 
@@ -72,11 +85,17 @@ def _build_adapter(connection_manager: Connections) -> CloudAdapter:
 
 
 def _build_agent(settings: BotSettings) -> TeamsSsoAgent:
+	"""Build the Teams SSO agent with all required settings."""
 	return TeamsSsoAgent(
 		AgentSettings(
 			bot_app_id=settings.app_id,
 			oauth_connection_name=settings.oauth_connection_name,
 			public_base_url=settings.public_base_url,
+			azure_openai_endpoint=settings.azure_openai_endpoint,
+			azure_openai_api_key=settings.azure_openai_api_key,
+			azure_openai_api_version=settings.azure_openai_api_version,
+			azure_openai_deployment_name=settings.azure_openai_deployment_name,
+			allowed_tenants=settings.allowed_tenants,
 		)
 	)
 

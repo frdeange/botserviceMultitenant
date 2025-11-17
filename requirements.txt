@@ -3,8 +3,11 @@ microsoft-agents-hosting-aiohttp
 microsoft-agents-activity
 microsoft-agents-authentication-msal
 
-#  OpenAI SDK
+# OpenAI SDK
 openai
+
+# JWT decoding for token validation
+pyjwt
 
 # Utilities
 python-dotenv

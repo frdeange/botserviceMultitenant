@@ -1,18 +1,20 @@
-"""Bot agent implementation with Teams SSO helpers."""
+"""Bot agent implementation with Teams SSO and Azure OpenAI integration."""
 
 from __future__ import annotations
 
-import base64
-import json
 import logging
+import os
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Optional
 
 import jwt
+from openai import AsyncAzureOpenAI
+
 from microsoft_agents.activity import (
 	ActionTypes,
 	Activity,
+	ActivityTypes,
 	CardAction,
 	OAuthCard,
 	SignInConstants,
@@ -41,21 +43,44 @@ class AgentSettings:
 	bot_app_id: str
 	oauth_connection_name: str
 	public_base_url: str
+	azure_openai_endpoint: str
+	azure_openai_api_key: str
+	azure_openai_api_version: str
+	azure_openai_deployment_name: str
+	allowed_tenants: list[str]
 
 
 class TeamsSsoAgent(ActivityHandler):
-	"""Activity handler that implements Teams SSO best practices."""
+	"""Activity handler that implements Teams SSO best practices with Azure OpenAI integration."""
 
 	def __init__(self, settings: AgentSettings):
 		super().__init__()
 		self._settings = settings
+		
+		# Initialize Azure OpenAI client
+		self._openai_client = AsyncAzureOpenAI(
+			api_version=settings.azure_openai_api_version,
+			azure_endpoint=settings.azure_openai_endpoint,
+			api_key=settings.azure_openai_api_key
+		)
+		
+		logger.info("TeamsSsoAgent initialized with Azure OpenAI support")
 
 	async def on_message_activity(self, turn_context: TurnContext) -> None:
+		"""Handle incoming messages with authentication and Azure OpenAI processing."""
+		
+		# Multi-tenant validation (if configured)
+		if not await self._validate_tenant(turn_context):
+			return
+		
+		# Get user token for authentication
 		token_response = await self._get_user_token(turn_context)
 		if token_response and token_response.token:
-			await self._reply_with_profile(turn_context, token_response)
+			# User is authenticated - process message with Azure OpenAI
+			await self._process_message_with_openai(turn_context, token_response)
 			return
 
+		# User not authenticated - send sign-in card
 		await self._send_sign_in_card(turn_context)
 
 	async def on_sign_in_invoke(self, turn_context: TurnContext):
@@ -80,20 +105,78 @@ class TeamsSsoAgent(ActivityHandler):
 
 		return await super().on_sign_in_invoke(turn_context)
 
-	async def _reply_with_profile(
+	async def _validate_tenant(self, turn_context: TurnContext) -> bool:
+		"""Validate that the request comes from an allowed tenant."""
+		if not self._settings.allowed_tenants:
+			# No tenant restrictions configured
+			return True
+		
+		# Get tenant ID from conversation (available in Teams)
+		user_tenant_id = getattr(turn_context.activity.conversation, "tenant_id", None)
+		
+		if user_tenant_id and user_tenant_id not in self._settings.allowed_tenants:
+			logger.warning(
+				f"Unauthorized tenant access attempt: {user_tenant_id}. "
+				f"Allowed tenants: {self._settings.allowed_tenants}"
+			)
+			await turn_context.send_activity(
+				"I'm sorry, but your organization is not authorized to use this bot. "
+				"Please contact your administrator for access."
+			)
+			return False
+		
+		if user_tenant_id:
+			logger.info(f"Tenant {user_tenant_id} authorized successfully")
+		
+		return True
+
+	async def _process_message_with_openai(
 		self, turn_context: TurnContext, token_response: TokenResponse
 	) -> None:
+		"""Process user message with Azure OpenAI using streaming response."""
+		user_message = turn_context.activity.text
+		conversation_id = turn_context.activity.conversation.id
+		
+		# Decode JWT to get user info
 		claims = self._decode_jwt(token_response.token)
-		display_name = claims.get("name") or claims.get("preferred_username")
-		tenant = claims.get("tid")
-		lines = [
-			"✅ Authentication completed via Teams SSO.",
-			f"User: {display_name or 'unknown'}",
-		]
-		if tenant:
-			lines.append(f"Tenant: {tenant}")
-		lines.append("You can request protected resources with this signed-in session.")
-		await turn_context.send_activity("\n".join(lines))
+		display_name = claims.get("name") or claims.get("preferred_username") or "User"
+		
+		logger.info(f"Processing message from {display_name} ({conversation_id}): {user_message[:50]}...")
+		
+		# Enable streaming response for better UX
+		turn_context.streaming_response.set_feedback_loop(True)
+		turn_context.streaming_response.set_generated_by_ai_label(True)
+		
+		try:
+			# Call Azure OpenAI with streaming enabled
+			streamed_response = await self._openai_client.chat.completions.create(
+				model=self._settings.azure_openai_deployment_name,
+				messages=[
+					{
+						"role": "system",
+						"content": f"You are a helpful AI assistant in Microsoft Teams. The user's name is {display_name}. "
+								   "Respond naturally and helpfully to user queries."
+					},
+					{"role": "user", "content": user_message}
+				],
+				stream=True,
+			)
+			
+			# Stream the response chunks back to the user
+			async for chunk in streamed_response:
+				if chunk.choices and chunk.choices[0].delta.content:
+					turn_context.streaming_response.queue_text_chunk(chunk.choices[0].delta.content)
+			
+			logger.info(f"Successfully sent streaming response to {conversation_id}")
+			
+		except Exception as e:
+			logger.error(f"Error during Azure OpenAI streaming: {e}", exc_info=True)
+			turn_context.streaming_response.queue_text_chunk(
+				"An error occurred while processing your message. Please try again later."
+			)
+		finally:
+			# Always end the stream
+			await turn_context.streaming_response.end_stream()
 
 	async def _send_sign_in_card(self, turn_context: TurnContext) -> None:
 		logger.info("No cached token found, sending OAuth card to Teams client.")
@@ -165,8 +248,19 @@ class TeamsSsoAgent(ActivityHandler):
 			raise ValueError("UserTokenClient not available on TurnContext")
 		return client
 
+	async def on_members_added_activity(self, members_added, turn_context: TurnContext) -> None:
+		"""Handle new members joining the conversation."""
+		for member in members_added:
+			if member.id != turn_context.activity.recipient.id:
+				await turn_context.send_activity(
+					"👋 Welcome! I'm your AI assistant powered by Azure OpenAI.\n\n"
+					"I use Teams SSO for secure authentication. You'll be prompted to sign in "
+					"when you send your first message. Ask me anything!"
+				)
+
 	@staticmethod
 	def _decode_jwt(raw_token: str) -> dict[str, Any]:
+		"""Decode JWT token without signature verification (for reading claims only)."""
 		try:
 			return jwt.decode(
 				raw_token,
