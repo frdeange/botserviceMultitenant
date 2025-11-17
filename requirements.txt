@@ -1,0 +1,10 @@
+# Microsoft Agents SDK for Bot Framework
+microsoft-agents-hosting-aiohttp
+microsoft-agents-activity
+microsoft-agents-authentication-msal
+
+#  OpenAI SDK
+openai
+
+# Utilities
+python-dotenv
