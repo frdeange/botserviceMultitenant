@@ -3,6 +3,10 @@ microsoft-agents-hosting-aiohttp
 microsoft-agents-activity
 microsoft-agents-authentication-msal
 
+# Microsoft Foundry SDK
+azure-ai-projects
+azure-identity
+
 # OpenAI SDK
 openai
 

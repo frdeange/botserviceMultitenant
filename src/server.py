@@ -30,10 +30,9 @@ class BotSettings:
 	client_secret: str | None
 	oauth_connection_name: str
 	public_base_url: str
-	azure_openai_endpoint: str
-	azure_openai_api_key: str
-	azure_openai_api_version: str
-	azure_openai_deployment_name: str
+	# Azure AI Foundry configuration
+	foundry_project_endpoint: str
+	foundry_agent_name: str
 	port: int = 8000
 	allowed_tenants: List[str] = field(default_factory=list)
 
@@ -91,10 +90,8 @@ def _build_agent(settings: BotSettings) -> TeamsSsoAgent:
 			bot_app_id=settings.app_id,
 			oauth_connection_name=settings.oauth_connection_name,
 			public_base_url=settings.public_base_url,
-			azure_openai_endpoint=settings.azure_openai_endpoint,
-			azure_openai_api_key=settings.azure_openai_api_key,
-			azure_openai_api_version=settings.azure_openai_api_version,
-			azure_openai_deployment_name=settings.azure_openai_deployment_name,
+			foundry_project_endpoint=settings.foundry_project_endpoint,
+			foundry_agent_name=settings.foundry_agent_name,
 			allowed_tenants=settings.allowed_tenants,
 		)
 	)

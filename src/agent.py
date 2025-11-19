@@ -1,16 +1,18 @@
-"""Bot agent implementation with Teams SSO and Azure OpenAI integration."""
+"""Bot agent implementation with Teams SSO and Azure AI Foundry Agent Service integration."""
 
 from __future__ import annotations
 
 import logging
 import os
-from collections import defaultdict
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Optional
 
 import jwt
-from openai import AsyncAzureOpenAI
+from azure.ai.projects import AIProjectClient
+from azure.ai.agents.models import MessageDeltaChunk, ThreadMessage, ThreadRun, RunStep
+from azure.ai.agents.models import AgentStreamEvent
+from azure.identity import DefaultAzureCredential
 
 from microsoft_agents.activity import (
 	ActionTypes,
@@ -44,10 +46,9 @@ class AgentSettings:
 	bot_app_id: str
 	oauth_connection_name: str
 	public_base_url: str
-	azure_openai_endpoint: str
-	azure_openai_api_key: str
-	azure_openai_api_version: str
-	azure_openai_deployment_name: str
+	# Azure AI Foundry configuration
+	foundry_project_endpoint: str
+	foundry_agent_name: str
 	allowed_tenants: list[str]
 
 
@@ -58,22 +59,30 @@ class TeamsSsoAgent(ActivityHandler):
 		super().__init__()
 		self._settings = settings
 		
-		# Initialize Azure OpenAI client
-		self._openai_client = AsyncAzureOpenAI(
-			api_version=settings.azure_openai_api_version,
-			azure_endpoint=settings.azure_openai_endpoint,
-			api_key=settings.azure_openai_api_key
+		# Initialize Azure AI Foundry Project Client with Managed Identity only
+		credential = DefaultAzureCredential()
+		
+		self._project_client = AIProjectClient(
+			endpoint=settings.foundry_project_endpoint,
+			credential=credential
 		)
 		
-		# Conversation history storage: {conversation_id: [{"role": "user", "content": "..."}]}
-		# Note: This is in-memory storage. For production, consider Azure CosmosDB or Redis
-		self._conversation_history: dict[str, list[dict[str, str]]] = defaultdict(list)
-		self._max_history_messages = 20  # Keep last 20 messages (10 exchanges)
+		# Get the agent from AI Foundry by name
+		try:
+			self._agent = self._project_client.agents.get(agent_name=settings.foundry_agent_name)
+			logger.info(f"Retrieved AI Foundry agent: {self._agent.name} (ID: {self._agent.id})")
+		except Exception as e:
+			logger.error(f"Failed to retrieve agent '{settings.foundry_agent_name}': {e}")
+			raise
 		
-		logger.info("TeamsSsoAgent initialized with Azure OpenAI support and conversation memory")
+		# Thread storage: {conversation_id: thread_id}
+		# AI Foundry manages conversation history in threads automatically
+		self._conversation_threads: dict[str, str] = {}
+		
+		logger.info(f"TeamsSsoAgent initialized with Azure AI Foundry Agent: {self._agent.name}")
 
 	async def on_message_activity(self, turn_context: TurnContext) -> None:
-		"""Handle incoming messages with authentication and Azure OpenAI processing."""
+		"""Handle incoming messages with authentication and Azure AI Foundry Agent processing."""
 		
 		# Multi-tenant validation (if configured)
 		if not await self._validate_tenant(turn_context):
@@ -83,22 +92,28 @@ class TeamsSsoAgent(ActivityHandler):
 		token_response = await self._get_user_token(turn_context)
 		if token_response and token_response.token:
 			# Check for special commands
-			user_message = turn_context.activity.text.strip().lower()
+			user_message = turn_context.activity.text.strip()
+			user_message_lower = user_message.lower()
 			conversation_id = turn_context.activity.conversation.id
 			
-			if user_message in ["/reset", "/clear", "/new"]:
-				# Clear conversation history
-				if conversation_id in self._conversation_history:
-					self._conversation_history[conversation_id].clear()
-					logger.info(f"Cleared conversation history for {conversation_id}")
+			if user_message_lower in ["/reset", "/clear", "/new"]:
+				# Delete the AI Foundry thread to start fresh
+				if conversation_id in self._conversation_threads:
+					thread_id = self._conversation_threads[conversation_id]
+					try:
+						self._project_client.agents.threads.delete(thread_id)
+						del self._conversation_threads[conversation_id]
+						logger.info(f"Deleted AI Foundry thread {thread_id} for conversation {conversation_id}")
+					except Exception as e:
+						logger.warning(f"Failed to delete thread: {e}")
 				
 				await turn_context.send_activity(
 					"🔄 Conversation history cleared! Starting fresh. How can I help you?"
 				)
 				return
 			
-			# User is authenticated - process message with Azure OpenAI
-			await self._process_message_with_openai(turn_context, token_response)
+			# User is authenticated - process message with Azure AI Foundry Agent
+			await self._process_message_with_agent(turn_context, token_response)
 			return
 
 		# User not authenticated - send sign-in card
@@ -151,10 +166,10 @@ class TeamsSsoAgent(ActivityHandler):
 		
 		return True
 
-	async def _process_message_with_openai(
+	async def _process_message_with_agent(
 		self, turn_context: TurnContext, token_response: TokenResponse
 	) -> None:
-		"""Process user message with Azure OpenAI using streaming response."""
+		"""Process user message with Azure AI Foundry Agent using streaming response."""
 		user_message = turn_context.activity.text
 		conversation_id = turn_context.activity.conversation.id
 		
@@ -169,51 +184,68 @@ class TeamsSsoAgent(ActivityHandler):
 		turn_context.streaming_response.set_generated_by_ai_label(True)
 		
 		try:
-			# Get or initialize conversation history
-			history = self._conversation_history[conversation_id]
+			# Get or create thread for this conversation
+			if conversation_id not in self._conversation_threads:
+				# Create new thread in AI Foundry
+				thread = self._project_client.agents.create_thread()
+				self._conversation_threads[conversation_id] = thread.id
+				logger.info(f"Created new AI Foundry thread {thread.id} for conversation {conversation_id}")
 			
-			# Add current user message to history
-			history.append({"role": "user", "content": user_message})
+			thread_id = self._conversation_threads[conversation_id]
 			
-			# Build messages for API call (system message + history)
-			messages = [
-				{
-					"role": "system",
-					"content": f"You are a helpful AI assistant in Microsoft Teams. The user's name is {display_name}. "
-							   "Respond naturally and helpfully to user queries. Maintain context from previous messages."
-				}
-			]
-			messages.extend(history)
+			# Create message in the thread with user context
+			# Note: The agent's system prompt handles the Neocase context
+			# We add user info as additional context
+			message_content = f"[User: {display_name}]\n\n{user_message}"
 			
-			logger.info(f"Conversation {conversation_id}: {len(history)} messages in history")
-			
-			# Call Azure OpenAI with streaming enabled
-			streamed_response = await self._openai_client.chat.completions.create(
-				model=self._settings.azure_openai_deployment_name,
-				messages=messages,
-				stream=True,
+			self._project_client.agents.messages.create(
+				thread_id=thread_id,
+				role="user",
+				content=message_content
 			)
 			
-			# Collect assistant response while streaming
-			assistant_response = ""
-			async for chunk in streamed_response:
-				if chunk.choices and chunk.choices[0].delta.content:
-					content = chunk.choices[0].delta.content
-					assistant_response += content
-					turn_context.streaming_response.queue_text_chunk(content)
+			logger.info(f"Created message in thread {thread_id}")
 			
-			# Add assistant response to history
-			history.append({"role": "assistant", "content": assistant_response})
+			# Create and stream the run using the correct API
+			with self._project_client.agents.runs.stream(
+				thread_id=thread_id,
+				agent_id=self._agent.id
+			) as stream:
+				# Process streaming events
+				accumulated_text = ""
+				
+				for event_type, event_data, _ in stream:
+					# Handle different event types
+					if isinstance(event_data, MessageDeltaChunk):
+						# Text delta from the agent
+						if event_data.text:
+							text_chunk = event_data.text
+							accumulated_text += text_chunk
+							turn_context.streaming_response.queue_text_chunk(text_chunk)
+					
+					elif isinstance(event_data, ThreadRun):
+						if event_data.status == "completed":
+							logger.info(f"Agent run completed for thread {thread_id}")
+						elif event_data.status == "failed":
+							logger.error(f"Agent run failed: {event_data.last_error}")
+							turn_context.streaming_response.queue_text_chunk(
+								"\n\n⚠️ An error occurred while processing your message."
+							)
+					
+					elif event_type == AgentStreamEvent.ERROR:
+						logger.error(f"Agent stream error: {event_data}")
+						turn_context.streaming_response.queue_text_chunk(
+							"\n\n⚠️ An error occurred while processing your message."
+						)
+					
+					elif event_type == AgentStreamEvent.DONE:
+						logger.info("Stream completed")
+						break
 			
-			# Trim history if it gets too long (keep last N messages)
-			if len(history) > self._max_history_messages:
-				history[:] = history[-self._max_history_messages:]
-				logger.info(f"Trimmed conversation history to {self._max_history_messages} messages")
-			
-			logger.info(f"Successfully sent streaming response to {conversation_id}")
+			logger.info(f"Successfully streamed response ({len(accumulated_text)} chars) to {conversation_id}")
 			
 		except Exception as e:
-			logger.error(f"Error during Azure OpenAI streaming: {e}", exc_info=True)
+			logger.error(f"Error during Azure AI Foundry Agent streaming: {e}", exc_info=True)
 			turn_context.streaming_response.queue_text_chunk(
 				"An error occurred while processing your message. Please try again later."
 			)
@@ -296,14 +328,15 @@ class TeamsSsoAgent(ActivityHandler):
 		for member in members_added:
 			if member.id != turn_context.activity.recipient.id:
 				await turn_context.send_activity(
-					"👋 Welcome! I'm your AI assistant powered by Azure OpenAI.\n\n"
+					"👋 Welcome to the **Neocase AI Assistant**!\n\n"
+					"I'm here to help you discover how Neocase Software transforms customer service and case management with AI-powered automation.\n\n"
 					"**Features:**\n"
-					"✅ Conversational memory - I remember our chat history\n"
+					"✅ Persistent conversation memory (powered by Azure AI Foundry)\n"
 					"✅ Teams SSO authentication\n"
 					"✅ Streaming responses for better experience\n\n"
 					"**Commands:**\n"
-					"• `/reset` or `/clear` - Start a new conversation\n\n"
-					"Ask me anything to get started!"
+					"• `/reset` or `/clear` - Start a fresh conversation\n\n"
+					"Ask me about Neocase's solutions, features, or how it integrates with Microsoft Teams!"
 				)
 
 	@staticmethod

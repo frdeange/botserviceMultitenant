@@ -57,19 +57,12 @@ def build_settings() -> BotSettings:
 		public_base_url = f"https://{public_base_url}"
 		logging.info(f"Added https:// prefix to PUBLIC_BASE_URL: {public_base_url}")
 	
-	# Azure OpenAI Configuration
-	azure_openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-	if not azure_openai_endpoint:
-		raise RuntimeError("AZURE_OPENAI_ENDPOINT is not defined. Please set it in your .env file.")
+	# Azure AI Foundry Agent Service configuration
+	foundry_project_endpoint = os.getenv("AZURE_FOUNDRY_PROJECT_ENDPOINT")
+	foundry_agent_name = os.getenv("AZURE_FOUNDRY_AGENT_NAME")
 	
-	azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-	if not azure_openai_api_key:
-		raise RuntimeError("AZURE_OPENAI_API_KEY is not defined. Please set it in your .env file.")
-	
-	azure_openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
-	azure_openai_deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-	if not azure_openai_deployment_name:
-		raise RuntimeError("AZURE_OPENAI_DEPLOYMENT_NAME is not defined. Please set it in your .env file.")
+	if not foundry_project_endpoint:
+		raise RuntimeError("AZURE_FOUNDRY_PROJECT_ENDPOINT environment variable is required")
 
 	# Multi-tenant Access Control
 	allowed = [tenant.strip() for tenant in os.getenv("ALLOWED_TENANTS", "").split(",") if tenant.strip()]
@@ -79,14 +72,12 @@ def build_settings() -> BotSettings:
 		app_type=app_type,
 		tenant_id=tenant_id,
 		client_secret=client_secret,
-		oauth_connection_name=connection_name,
+		oauth_connection_name=oauth_connection_name,
 		public_base_url=public_base_url,
-		azure_openai_endpoint=azure_openai_endpoint,
-		azure_openai_api_key=azure_openai_api_key,
-		azure_openai_api_version=azure_openai_api_version,
-		azure_openai_deployment_name=azure_openai_deployment_name,
+		foundry_project_endpoint=foundry_project_endpoint,
+		foundry_agent_name=foundry_agent_name,
 		port=port,
-		allowed_tenants=allowed,
+		allowed_tenants=allowed_tenants,
 	)
 
 
@@ -100,7 +91,7 @@ def main() -> None:
 	)
 	
 	logger = logging.getLogger(__name__)
-	logger.info("Starting Teams SSO Bot with Azure OpenAI integration...")
+	logger.info("Starting Teams SSO Bot with Azure AI Foundry Agent Service integration...")
 	
 	try:
 		settings = build_settings()
@@ -108,7 +99,8 @@ def main() -> None:
 		logger.info(f"App Type: {settings.app_type}")
 		logger.info(f"OAuth Connection: {settings.oauth_connection_name}")
 		logger.info(f"Public URL: {settings.public_base_url}")
-		logger.info(f"Azure OpenAI Deployment: {settings.azure_openai_deployment_name}")
+		logger.info(f"AI Foundry Agent: {settings.foundry_agent_name}")
+		logger.info(f"AI Foundry Project: {settings.foundry_project_endpoint}")
 		if settings.allowed_tenants:
 			logger.info(f"Allowed Tenants: {', '.join(settings.allowed_tenants)}")
 		else:

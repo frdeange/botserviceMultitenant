@@ -1,10 +1,10 @@
-# Bot Service Multitenant with Teams SSO and Azure OpenAI
+# Bot Service Multitenant with Teams SSO and Azure AI Foundry Agent Service
 
 This repository hosts a **Microsoft Teams bot** written in Python using the Microsoft Agents SDK. It implements:
 
 - ✅ **Single Sign-On (SSO)** flow recommended by Microsoft for Teams bots
-- ✅ **Azure OpenAI integration** with streaming responses
-- ✅ **Conversation memory** for natural, contextual interactions
+- ✅ **Azure AI Foundry Agent Service** with streaming responses and persistent conversation memory
+- ✅ **Thread-based conversation management** for natural, contextual interactions
 - ✅ **User-Assigned Managed Identity** for secure Azure authentication
 - ✅ **Multi-tenant support** with optional tenant validation
 - ✅ **Automatic token exchange** for seamless authentication
@@ -18,12 +18,13 @@ This repository hosts a **Microsoft Teams bot** written in Python using the Micr
 - **JWT Validation**: Secure token handling and claims extraction
 
 ### AI Integration
-- **Azure OpenAI**: GPT-4 powered conversations
-- **Streaming Responses**: Real-time token streaming for better UX
-- **Conversation Memory**: Maintains context across messages (last 20 messages)
-- **Personalized Context**: Uses authenticated user's name
-- **Smart Commands**: `/reset`, `/clear`, `/new` to start fresh conversations
-- **Error Handling**: Graceful degradation on API failures
+- **Azure AI Foundry Agent Service**: Enterprise-grade agent orchestration and management
+- **Persistent Thread Management**: AI Foundry automatically maintains full conversation history
+- **Streaming Responses**: Real-time message streaming with AgentStreamEvent for better UX
+- **Personalized Context**: Uses authenticated user's name and display info
+- **Smart Commands**: `/reset`, `/clear`, `/new` to delete threads and start fresh conversations
+- **Neocase Expertise**: Pre-configured with Neocase Software partner context for customer service solutions
+- **Error Handling**: Graceful degradation on API failures with user-friendly messages
 
 ### Security
 - **Managed Identity**: No secrets in code or environment
@@ -35,7 +36,7 @@ This repository hosts a **Microsoft Teams bot** written in Python using the Micr
 
 ```
 src/
-├── agent.py      # Bot logic, SSO handling, and Azure OpenAI integration
+├── agent.py      # Bot logic, SSO handling, and Azure AI Foundry Agent Service integration
 ├── server.py     # CloudAdapter bootstrap, HTTP routes, and middleware
 └── main.py       # Entry point, environment loading, and logging
 
@@ -43,7 +44,8 @@ teams-manifest/
 ├── manifest.json # Teams app manifest with SSO configuration
 └── README.md     # Instructions for creating app package
 
-MANAGED_IDENTITY_SETUP.md  # 🔧 CRITICAL: How to assign Managed Identity to App Service
+NEOCASE_AGENT_PROMPT.md     # 📝 System prompt template for Neocase AI Assistant
+MANAGED_IDENTITY_SETUP.md   # 🔧 CRITICAL: How to assign Managed Identity to App Service
 ```
 
 ## ⚙️ Requirements
@@ -52,7 +54,7 @@ MANAGED_IDENTITY_SETUP.md  # 🔧 CRITICAL: How to assign Managed Identity to Ap
 - **Azure Bot Service** with User-Assigned Managed Identity
 - **Azure AD App Registration** configured for SSO
 - **OAuth Connection** configured in Azure Bot Service
-- **Azure OpenAI Service** with deployed model
+- **Azure AI Foundry Hub & Project** with deployed agent
 - **Public HTTPS endpoint** (Azure Web App, ngrok for testing)
 
 ## 🔐 Environment Variables
@@ -72,13 +74,12 @@ The project automatically loads variables from `.env`. Required variables:
 | --- | --- | --- |
 | `OAUTH_CONNECTION_NAME` | OAuth connection name in Bot Service | `EntraIDConnection` |
 
-### Azure OpenAI
+### Azure AI Foundry Agent Service
 | Variable | Description | Example |
 | --- | --- | --- |
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint URL | `https://your-resource.openai.azure.com/` |
-| `AZURE_OPENAI_API_KEY` | API key | `your-api-key` |
-| `AZURE_OPENAI_API_VERSION` | API version | `2025-04-01-preview` |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Model deployment name | `gpt-4.1` |
+| `AZURE_FOUNDRY_PROJECT_ENDPOINT` | AI Foundry project endpoint URL | `https://your-foundry.services.ai.azure.com/api/projects/your-project` |
+| `AZURE_FOUNDRY_PROJECT_API_KEY` | Project API key (optional if using Managed Identity) | `your-project-api-key` |
+| `AZURE_FOUNDRY_AGENT_NAME` | Name of the deployed agent in AI Foundry | `NEOCASE-AGENT` |
 
 ### Server Configuration
 | Variable | Description | Default |
@@ -139,6 +140,14 @@ ConnectionRefusedError: [Errno 111] Connection refused
 HTTPConnectionPool(host='169.254.169.254', port=80): Max retries exceeded
 ```
 
+### Azure AI Foundry Agent Setup
+
+1. **Create AI Foundry Hub & Project** at https://ai.azure.com
+2. **Deploy an Agent** in your AI Foundry project
+3. **Copy system prompt** from `NEOCASE_AGENT_PROMPT.md` to agent's Instructions field
+4. **Configure environment variables** with your project endpoint and agent name
+5. **Assign Managed Identity** permissions to AI Foundry resources (if not using API key)
+
 ### Full Deployment Guide
 
 Complete deployment instructions including:
@@ -146,6 +155,7 @@ Complete deployment instructions including:
 - ✅ **Managed Identity assignment** (MUST DO FIRST)
 - Azure AD App Registration configuration
 - OAuth Connection setup
+- Azure AI Foundry agent configuration
 - Teams app package creation
 - Testing checklist
 - Troubleshooting guide
@@ -158,8 +168,8 @@ Complete deployment instructions including:
 2. **No token found** → Bot sends OAuth card with SSO prompt
 3. **Teams intercepts** → Performs automatic token exchange
 4. **Token received** → Bot validates and extracts user claims
-5. **User authenticated** → Message sent to Azure OpenAI with user context
-6. **AI response** → Streamed back to user in real-time
+5. **User authenticated** → Message sent to Azure AI Foundry Agent with user context
+6. **AI response** → Streamed back to user in real-time via AgentStreamEvent
 
 ### Token Exchange (Silent Authentication)
 
@@ -199,15 +209,18 @@ If SSO fails (misconfigured or first use):
 │   - Token validation                │
 │   - User authentication             │
 │   - Message routing                 │
+│   - Thread management               │
 └──────┬──────────────────────────────┘
        │
        ├───────────────┐
        │               │
-┌──────▼────────┐ ┌───▼──────────────┐
-│  Bot Service  │ │  Azure OpenAI    │
-│  OAuth Token  │ │  Chat API        │
-│  Exchange     │ │  (Streaming)     │
-└───────────────┘ └──────────────────┘
+┌──────▼────────┐ ┌───▼──────────────────────┐
+│  Bot Service  │ │  Azure AI Foundry        │
+│  OAuth Token  │ │  Agent Service           │
+│  Exchange     │ │  - AIProjectClient       │
+└───────────────┘ │  - Persistent Threads    │
+                  │  - AgentStreamEvent      │
+                  └──────────────────────────┘
 ```
 
 ## ✅ Health Check
@@ -230,16 +243,18 @@ Response:
 - [Configure OAuth Connection](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/authentication/auth-oauth-provider)
 - [User-Assigned Managed Identity](https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration?view=azure-bot-service-4.0&tabs=userassigned)
 - [Microsoft Agents SDK](https://github.com/microsoft/agents)
-- [Azure OpenAI Service](https://learn.microsoft.com/en-us/azure/ai-services/openai/)
+- [Azure AI Foundry](https://learn.microsoft.com/en-us/azure/ai-studio/)
+- [Azure AI Agent Service](https://learn.microsoft.com/en-us/azure/ai-services/agents/overview)
+- [Neocase Software](https://www.neocasesoftware.com/)
 
 ## 🚀 Next Steps
 
-- **Enhance AI**: Add function calling, RAG, conversation memory
-- **Microsoft Graph**: Integrate SharePoint, OneDrive, Calendar
+- **Enhance AI**: Add function calling, RAG, knowledge bases in AI Foundry
+- **Microsoft Graph**: Integrate SharePoint, OneDrive, Calendar via agent tools
 - **Adaptive Cards**: Rich UI for better user experience
-- **State Management**: Persist conversation history
-- **Analytics**: Track usage and performance
+- **Analytics**: Track usage and performance with AI Foundry metrics
 - **Multi-language**: Add i18n support
+- **Custom Tools**: Extend agent capabilities with Neocase-specific integrations
 
 ## 🤝 Contributing
 
@@ -255,5 +270,7 @@ MIT License - see LICENSE file for details
 
 ---
 
-**Built with ❤️ using Microsoft Agents SDK and Azure OpenAI**
+**Built with ❤️ using Microsoft Agents SDK and Azure AI Foundry Agent Service**
+
+**Customized for Neocase Software - AI-powered customer service excellence**
 
