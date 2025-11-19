@@ -63,16 +63,19 @@ def build_settings() -> BotSettings:
 	
 	if not foundry_project_endpoint:
 		raise RuntimeError("AZURE_FOUNDRY_PROJECT_ENDPOINT environment variable is required")
+	
+	if not foundry_agent_name:
+		raise RuntimeError("AZURE_FOUNDRY_AGENT_NAME environment variable is required")
 
 	# Multi-tenant Access Control
-	allowed = [tenant.strip() for tenant in os.getenv("ALLOWED_TENANTS", "").split(",") if tenant.strip()]
+	allowed_tenants = [tenant.strip() for tenant in os.getenv("ALLOWED_TENANTS", "").split(",") if tenant.strip()]
 
 	return BotSettings(
 		app_id=app_id,
 		app_type=app_type,
 		tenant_id=tenant_id,
 		client_secret=client_secret,
-		oauth_connection_name=oauth_connection_name,
+		oauth_connection_name=connection_name,
 		public_base_url=public_base_url,
 		foundry_project_endpoint=foundry_project_endpoint,
 		foundry_agent_name=foundry_agent_name,
