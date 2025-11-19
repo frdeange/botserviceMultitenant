@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections import defaultdict
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Optional
@@ -64,7 +65,12 @@ class TeamsSsoAgent(ActivityHandler):
 			api_key=settings.azure_openai_api_key
 		)
 		
-		logger.info("TeamsSsoAgent initialized with Azure OpenAI support")
+		# Conversation history storage: {conversation_id: [{"role": "user", "content": "..."}]}
+		# Note: This is in-memory storage. For production, consider Azure CosmosDB or Redis
+		self._conversation_history: dict[str, list[dict[str, str]]] = defaultdict(list)
+		self._max_history_messages = 20  # Keep last 20 messages (10 exchanges)
+		
+		logger.info("TeamsSsoAgent initialized with Azure OpenAI support and conversation memory")
 
 	async def on_message_activity(self, turn_context: TurnContext) -> None:
 		"""Handle incoming messages with authentication and Azure OpenAI processing."""
@@ -76,6 +82,21 @@ class TeamsSsoAgent(ActivityHandler):
 		# Get user token for authentication
 		token_response = await self._get_user_token(turn_context)
 		if token_response and token_response.token:
+			# Check for special commands
+			user_message = turn_context.activity.text.strip().lower()
+			conversation_id = turn_context.activity.conversation.id
+			
+			if user_message in ["/reset", "/clear", "/new"]:
+				# Clear conversation history
+				if conversation_id in self._conversation_history:
+					self._conversation_history[conversation_id].clear()
+					logger.info(f"Cleared conversation history for {conversation_id}")
+				
+				await turn_context.send_activity(
+					"🔄 Conversation history cleared! Starting fresh. How can I help you?"
+				)
+				return
+			
 			# User is authenticated - process message with Azure OpenAI
 			await self._process_message_with_openai(turn_context, token_response)
 			return
@@ -148,24 +169,46 @@ class TeamsSsoAgent(ActivityHandler):
 		turn_context.streaming_response.set_generated_by_ai_label(True)
 		
 		try:
+			# Get or initialize conversation history
+			history = self._conversation_history[conversation_id]
+			
+			# Add current user message to history
+			history.append({"role": "user", "content": user_message})
+			
+			# Build messages for API call (system message + history)
+			messages = [
+				{
+					"role": "system",
+					"content": f"You are a helpful AI assistant in Microsoft Teams. The user's name is {display_name}. "
+							   "Respond naturally and helpfully to user queries. Maintain context from previous messages."
+				}
+			]
+			messages.extend(history)
+			
+			logger.info(f"Conversation {conversation_id}: {len(history)} messages in history")
+			
 			# Call Azure OpenAI with streaming enabled
 			streamed_response = await self._openai_client.chat.completions.create(
 				model=self._settings.azure_openai_deployment_name,
-				messages=[
-					{
-						"role": "system",
-						"content": f"You are a helpful AI assistant in Microsoft Teams. The user's name is {display_name}. "
-								   "Respond naturally and helpfully to user queries."
-					},
-					{"role": "user", "content": user_message}
-				],
+				messages=messages,
 				stream=True,
 			)
 			
-			# Stream the response chunks back to the user
+			# Collect assistant response while streaming
+			assistant_response = ""
 			async for chunk in streamed_response:
 				if chunk.choices and chunk.choices[0].delta.content:
-					turn_context.streaming_response.queue_text_chunk(chunk.choices[0].delta.content)
+					content = chunk.choices[0].delta.content
+					assistant_response += content
+					turn_context.streaming_response.queue_text_chunk(content)
+			
+			# Add assistant response to history
+			history.append({"role": "assistant", "content": assistant_response})
+			
+			# Trim history if it gets too long (keep last N messages)
+			if len(history) > self._max_history_messages:
+				history[:] = history[-self._max_history_messages:]
+				logger.info(f"Trimmed conversation history to {self._max_history_messages} messages")
 			
 			logger.info(f"Successfully sent streaming response to {conversation_id}")
 			
@@ -254,8 +297,13 @@ class TeamsSsoAgent(ActivityHandler):
 			if member.id != turn_context.activity.recipient.id:
 				await turn_context.send_activity(
 					"👋 Welcome! I'm your AI assistant powered by Azure OpenAI.\n\n"
-					"I use Teams SSO for secure authentication. You'll be prompted to sign in "
-					"when you send your first message. Ask me anything!"
+					"**Features:**\n"
+					"✅ Conversational memory - I remember our chat history\n"
+					"✅ Teams SSO authentication\n"
+					"✅ Streaming responses for better experience\n\n"
+					"**Commands:**\n"
+					"• `/reset` or `/clear` - Start a new conversation\n\n"
+					"Ask me anything to get started!"
 				)
 
 	@staticmethod

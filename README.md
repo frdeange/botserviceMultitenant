@@ -4,6 +4,7 @@ This repository hosts a **Microsoft Teams bot** written in Python using the Micr
 
 - ✅ **Single Sign-On (SSO)** flow recommended by Microsoft for Teams bots
 - ✅ **Azure OpenAI integration** with streaming responses
+- ✅ **Conversation memory** for natural, contextual interactions
 - ✅ **User-Assigned Managed Identity** for secure Azure authentication
 - ✅ **Multi-tenant support** with optional tenant validation
 - ✅ **Automatic token exchange** for seamless authentication
@@ -19,7 +20,9 @@ This repository hosts a **Microsoft Teams bot** written in Python using the Micr
 ### AI Integration
 - **Azure OpenAI**: GPT-4 powered conversations
 - **Streaming Responses**: Real-time token streaming for better UX
+- **Conversation Memory**: Maintains context across messages (last 20 messages)
 - **Personalized Context**: Uses authenticated user's name
+- **Smart Commands**: `/reset`, `/clear`, `/new` to start fresh conversations
 - **Error Handling**: Graceful degradation on API failures
 
 ### Security
