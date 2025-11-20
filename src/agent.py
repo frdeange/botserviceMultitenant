@@ -211,11 +211,13 @@ class TeamsSsoAgent(ActivityHandler):
 				# Create new conversation in AI Foundry with initial message
 				logger.info(f"[STEP 2/4] Creating new AI Foundry conversation for {conversation_id}")
 				try:
+					# Include user name in the message content for context
+					message_with_context = f"[User: {display_name}] {user_message}"
 					conv = self._openai_client.conversations.create(
 						items=[{
 							"type": "message",
 							"role": "user",
-							"content": user_message
+							"content": message_with_context
 						}]
 					)
 					self._conversation_threads[conversation_id] = conv.id
@@ -228,12 +230,14 @@ class TeamsSsoAgent(ActivityHandler):
 				foundry_conv_id = self._conversation_threads[conversation_id]
 				logger.info(f"[STEP 2/4] Adding message to existing conversation {foundry_conv_id}")
 				try:
+					# Include user name in the message content for context
+					message_with_context = f"[User: {display_name}] {user_message}"
 					self._openai_client.conversations.items.create(
 						conversation_id=foundry_conv_id,
 						items=[{
 							"type": "message",
 							"role": "user",
-							"content": user_message
+							"content": message_with_context
 						}]
 					)
 					logger.info(f"[STEP 2/4] ✓ Message added to conversation")
