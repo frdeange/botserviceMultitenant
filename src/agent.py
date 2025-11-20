@@ -311,13 +311,18 @@ class TeamsSsoAgent(ActivityHandler):
 	async def _get_user_token(
 		self, turn_context: TurnContext, magic_code: Optional[str] = None
 	) -> Optional[TokenResponse]:
-		user_token = self._get_user_token_client(turn_context).user_token
-		return await user_token.get_token(
-			user_id=turn_context.activity.from_property.id,
-			connection_name=self._settings.oauth_connection_name,
-			channel_id=turn_context.activity.channel_id,
-			code=magic_code,
-		)
+		try:
+			user_token = self._get_user_token_client(turn_context).user_token
+			return await user_token.get_token(
+				user_id=turn_context.activity.from_property.id,
+				connection_name=self._settings.oauth_connection_name,
+				channel_id=turn_context.activity.channel_id,
+				code=magic_code,
+			)
+		except Exception as e:
+			# Log the error but don't crash - user just needs to sign in
+			logger.info(f"Could not get user token (user needs to sign in): {e}")
+			return None
 
 	async def _handle_token_exchange(self, turn_context: TurnContext) -> Optional[dict]:
 		request = TokenExchangeInvokeRequest(**turn_context.activity.value)
