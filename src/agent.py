@@ -59,9 +59,9 @@ class TeamsSsoAgent(ActivityHandler):
 		super().__init__()
 		self._settings = settings
 		
-		# Initialize Azure AI Foundry Project Client with DefaultAzureCredential
-		# This works like the old code that was successful
-		credential = DefaultAzureCredential()
+		# Initialize Azure AI Foundry Project Client with Managed Identity
+		# Use ManagedIdentityCredential directly with the client_id from settings
+		credential = ManagedIdentityCredential(client_id=settings.bot_app_id)
 		
 		self._project_client = AIProjectClient(
 			endpoint=settings.foundry_project_endpoint,
