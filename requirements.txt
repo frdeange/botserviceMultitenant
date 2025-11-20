@@ -4,7 +4,7 @@ microsoft-agents-activity
 microsoft-agents-authentication-msal
 
 # Microsoft Foundry SDK
-azure-ai-projects
+azure-ai-projects==2.0.0b2
 azure-identity
 
 # OpenAI SDK
