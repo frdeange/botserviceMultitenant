@@ -12,7 +12,7 @@ import jwt
 from azure.ai.projects import AIProjectClient
 from azure.ai.agents.models import MessageDeltaChunk, ThreadMessage, ThreadRun, RunStep
 from azure.ai.agents.models import AgentStreamEvent
-from azure.identity import ManagedIdentityCredential
+from azure.identity import ManagedIdentityCredential, DefaultAzureCredential
 
 from microsoft_agents.activity import (
 	ActionTypes,
@@ -59,17 +59,19 @@ class TeamsSsoAgent(ActivityHandler):
 		super().__init__()
 		self._settings = settings
 		
-		# Initialize Azure AI Foundry Project Client with Managed Identity
-		# Use ManagedIdentityCredential directly with the client_id from settings
-		credential = ManagedIdentityCredential(client_id=settings.bot_app_id)
+		# Initialize Azure AI Foundry Project Client with DefaultAzureCredential
+		# This works like the old code that was successful
+		credential = DefaultAzureCredential()
 		
 		self._project_client = AIProjectClient(
 			endpoint=settings.foundry_project_endpoint,
 			credential=credential
 		)
 		
-		# Get the agent from AI Foundry by name
+		# Get or create the agent - using agent ID directly if available
+		# Otherwise try to retrieve by name
 		try:
+			# Try to get agent by name (this requires the agent to exist)
 			self._agent = self._project_client.agents.get(agent_name=settings.foundry_agent_name)
 			logger.info(f"Retrieved AI Foundry agent: {self._agent.name} (ID: {self._agent.id})")
 		except Exception as e:
@@ -180,79 +182,64 @@ class TeamsSsoAgent(ActivityHandler):
 		
 		logger.info(f"Processing message from {display_name} ({conversation_id}): {user_message[:50]}...")
 		
-		# Enable streaming response for better UX
-		turn_context.streaming_response.set_feedback_loop(True)
-		turn_context.streaming_response.set_generated_by_ai_label(True)
-		
 		try:
 			# Get or create thread for this conversation
 			if conversation_id not in self._conversation_threads:
 				# Create new thread in AI Foundry
-				thread = self._project_client.agents.create_thread()
+				thread = self._project_client.agents.threads.create()
 				self._conversation_threads[conversation_id] = thread.id
 				logger.info(f"Created new AI Foundry thread {thread.id} for conversation {conversation_id}")
 			
 			thread_id = self._conversation_threads[conversation_id]
 			
-			# Create message in the thread with user context
-			# Note: The agent's system prompt handles the Neocase context
-			# We add user info as additional context
-			message_content = f"[User: {display_name}]\n\n{user_message}"
-			
+			# Create message in the thread
 			self._project_client.agents.messages.create(
 				thread_id=thread_id,
 				role="user",
-				content=message_content
+				content=user_message
 			)
 			
-			logger.info(f"Created message in thread {thread_id}")
+			logger.info(f"Added message to thread {thread_id}: {user_message[:50]}...")
 			
-			# Create and stream the run using the correct API
-			with self._project_client.agents.runs.stream(
+			# Create and process run (like the old working code)
+			run = self._project_client.agents.runs.create_and_process(
 				thread_id=thread_id,
 				agent_id=self._agent.id
-			) as stream:
-				# Process streaming events
-				accumulated_text = ""
-				
-				for event_type, event_data, _ in stream:
-					# Handle different event types
-					if isinstance(event_data, MessageDeltaChunk):
-						# Text delta from the agent
-						if event_data.text:
-							text_chunk = event_data.text
-							accumulated_text += text_chunk
-							turn_context.streaming_response.queue_text_chunk(text_chunk)
-					
-					elif isinstance(event_data, ThreadRun):
-						if event_data.status == "completed":
-							logger.info(f"Agent run completed for thread {thread_id}")
-						elif event_data.status == "failed":
-							logger.error(f"Agent run failed: {event_data.last_error}")
-							turn_context.streaming_response.queue_text_chunk(
-								"\n\n⚠️ An error occurred while processing your message."
-							)
-					
-					elif event_type == AgentStreamEvent.ERROR:
-						logger.error(f"Agent stream error: {event_data}")
-						turn_context.streaming_response.queue_text_chunk(
-							"\n\n⚠️ An error occurred while processing your message."
-						)
-					
-					elif event_type == AgentStreamEvent.DONE:
-						logger.info("Stream completed")
+			)
+			
+			logger.info(f"Run {run.id} finished with status: {run.status}")
+			
+			if run.status == "failed":
+				logger.error(f"Run failed: {run.last_error}")
+				await turn_context.send_activity("⚠️ An error occurred while processing your message.")
+				return
+			
+			# Get the latest assistant response
+			messages = self._project_client.agents.messages.list(thread_id=thread_id)
+			
+			# Find the first (most recent) assistant message
+			response_text = None
+			for message in messages:
+				if message.role == "assistant":
+					# Extract text content
+					for content_item in message.content:
+						if hasattr(content_item, 'text') and hasattr(content_item.text, 'value'):
+							response_text = content_item.text.value
+							break
+					if response_text:
 						break
 			
-			logger.info(f"Successfully streamed response ({len(accumulated_text)} chars) to {conversation_id}")
+			if response_text:
+				await turn_context.send_activity(response_text)
+				logger.info(f"Sent response ({len(response_text)} chars) to {conversation_id}")
+			else:
+				await turn_context.send_activity("I apologize, but I couldn't generate a response.")
 			
 		except Exception as e:
-			logger.error(f"Error during Azure AI Foundry Agent streaming: {e}", exc_info=True)
-			turn_context.streaming_response.queue_text_chunk(
+			logger.error(f"Error during Azure AI Foundry Agent processing: {e}", exc_info=True)
+			await turn_context.send_activity(
 				"An error occurred while processing your message. Please try again later."
 			)
-		finally:
-			# Always end the stream
-			await turn_context.streaming_response.end_stream()
 
 	async def _send_sign_in_card(self, turn_context: TurnContext) -> None:
 		logger.info("No cached token found, sending OAuth card to Teams client.")
