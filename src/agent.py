@@ -59,30 +59,48 @@ class TeamsSsoAgent(ActivityHandler):
 		super().__init__()
 		self._settings = settings
 		
+		logger.info(f"[INIT] Initializing TeamsSsoAgent with Azure AI Foundry")
+		logger.info(f"[INIT] Bot App ID: {settings.bot_app_id}")
+		logger.info(f"[INIT] Foundry Project Endpoint: {settings.foundry_project_endpoint}")
+		logger.info(f"[INIT] Foundry Agent Name: {settings.foundry_agent_name}")
+		
 		# Initialize Azure AI Foundry Project Client with Managed Identity
 		# Use ManagedIdentityCredential directly with the client_id from settings
-		credential = ManagedIdentityCredential(client_id=settings.bot_app_id)
+		try:
+			logger.info(f"[INIT] Creating ManagedIdentityCredential with client_id: {settings.bot_app_id}")
+			credential = ManagedIdentityCredential(client_id=settings.bot_app_id)
+			logger.info(f"[INIT] ✓ Credential created")
+		except Exception as e:
+			logger.error(f"[INIT] ✗ Failed to create credential: {e}", exc_info=True)
+			raise
 		
-		self._project_client = AIProjectClient(
-			endpoint=settings.foundry_project_endpoint,
-			credential=credential
-		)
+		try:
+			logger.info(f"[INIT] Creating AIProjectClient")
+			self._project_client = AIProjectClient(
+				endpoint=settings.foundry_project_endpoint,
+				credential=credential
+			)
+			logger.info(f"[INIT] ✓ AIProjectClient created")
+		except Exception as e:
+			logger.error(f"[INIT] ✗ Failed to create AIProjectClient: {e}", exc_info=True)
+			raise
 		
 		# Get or create the agent - using agent ID directly if available
 		# Otherwise try to retrieve by name
 		try:
 			# Try to get agent by name (this requires the agent to exist)
+			logger.info(f"[INIT] Retrieving agent with name: {settings.foundry_agent_name}")
 			self._agent = self._project_client.agents.get(agent_name=settings.foundry_agent_name)
-			logger.info(f"Retrieved AI Foundry agent: {self._agent.name} (ID: {self._agent.id})")
+			logger.info(f"[INIT] ✓ Retrieved AI Foundry agent: {self._agent.name} (ID: {self._agent.id})")
 		except Exception as e:
-			logger.error(f"Failed to retrieve agent '{settings.foundry_agent_name}': {e}")
+			logger.error(f"[INIT] ✗ Failed to retrieve agent '{settings.foundry_agent_name}': {e}", exc_info=True)
 			raise
 		
 		# Thread storage: {conversation_id: thread_id}
 		# AI Foundry manages conversation history in threads automatically
 		self._conversation_threads: dict[str, str] = {}
 		
-		logger.info(f"TeamsSsoAgent initialized with Azure AI Foundry Agent: {self._agent.name}")
+		logger.info(f"[INIT] ✓ TeamsSsoAgent initialized successfully with Azure AI Foundry Agent: {self._agent.name}")
 
 	async def on_message_activity(self, turn_context: TurnContext) -> None:
 		"""Handle incoming messages with authentication and Azure AI Foundry Agent processing."""
@@ -180,63 +198,93 @@ class TeamsSsoAgent(ActivityHandler):
 		claims = self._decode_jwt(token_response.token)
 		display_name = claims.get("name") or claims.get("preferred_username") or "User"
 		
-		logger.info(f"Processing message from {display_name} ({conversation_id}): {user_message[:50]}...")
+		logger.info(f"[STEP 1/6] Processing message from {display_name} ({conversation_id}): {user_message[:50]}...")
 		
 		try:
 			# Get or create thread for this conversation
 			if conversation_id not in self._conversation_threads:
 				# Create new thread in AI Foundry
-				thread = self._project_client.agents.threads.create()
-				self._conversation_threads[conversation_id] = thread.id
-				logger.info(f"Created new AI Foundry thread {thread.id} for conversation {conversation_id}")
+				logger.info(f"[STEP 2/6] Creating new AI Foundry thread for conversation {conversation_id}")
+				try:
+					thread = self._project_client.agents.threads.create()
+					self._conversation_threads[conversation_id] = thread.id
+					logger.info(f"[STEP 2/6] ✓ Created new AI Foundry thread {thread.id}")
+				except Exception as e:
+					logger.error(f"[STEP 2/6] ✗ Failed to create thread: {e}", exc_info=True)
+					raise
+			else:
+				logger.info(f"[STEP 2/6] Using existing thread for conversation {conversation_id}")
 			
 			thread_id = self._conversation_threads[conversation_id]
+			logger.info(f"[STEP 3/6] Using thread ID: {thread_id}")
 			
 			# Create message in the thread
-			self._project_client.agents.messages.create(
-				thread_id=thread_id,
-				role="user",
-				content=user_message
-			)
-			
-			logger.info(f"Added message to thread {thread_id}: {user_message[:50]}...")
+			try:
+				logger.info(f"[STEP 3/6] Adding message to thread {thread_id}")
+				self._project_client.agents.messages.create(
+					thread_id=thread_id,
+					role="user",
+					content=user_message
+				)
+				logger.info(f"[STEP 3/6] ✓ Message added to thread")
+			except Exception as e:
+				logger.error(f"[STEP 3/6] ✗ Failed to add message: {e}", exc_info=True)
+				raise
 			
 			# Create and process run (like the old working code)
-			run = self._project_client.agents.runs.create_and_process(
-				thread_id=thread_id,
-				agent_id=self._agent.id
-			)
-			
-			logger.info(f"Run {run.id} finished with status: {run.status}")
+			try:
+				logger.info(f"[STEP 4/6] Creating and processing run with agent ID: {self._agent.id}")
+				run = self._project_client.agents.runs.create_and_process(
+					thread_id=thread_id,
+					agent_id=self._agent.id
+				)
+				logger.info(f"[STEP 4/6] ✓ Run {run.id} finished with status: {run.status}")
+			except Exception as e:
+				logger.error(f"[STEP 4/6] ✗ Failed to create/process run: {e}", exc_info=True)
+				raise
 			
 			if run.status == "failed":
-				logger.error(f"Run failed: {run.last_error}")
+				logger.error(f"[STEP 4/6] Run failed with error: {run.last_error}")
 				await turn_context.send_activity("⚠️ An error occurred while processing your message.")
 				return
 			
 			# Get the latest assistant response
-			messages = self._project_client.agents.messages.list(thread_id=thread_id)
+			try:
+				logger.info(f"[STEP 5/6] Retrieving messages from thread {thread_id}")
+				messages = self._project_client.agents.messages.list(thread_id=thread_id)
+				logger.info(f"[STEP 5/6] ✓ Retrieved messages list")
+			except Exception as e:
+				logger.error(f"[STEP 5/6] ✗ Failed to retrieve messages: {e}", exc_info=True)
+				raise
 			
 			# Find the first (most recent) assistant message
 			response_text = None
+			message_count = 0
 			for message in messages:
+				message_count += 1
+				logger.debug(f"[STEP 5/6] Checking message {message_count}: role={message.role}")
 				if message.role == "assistant":
 					# Extract text content
 					for content_item in message.content:
 						if hasattr(content_item, 'text') and hasattr(content_item.text, 'value'):
 							response_text = content_item.text.value
+							logger.info(f"[STEP 5/6] ✓ Found assistant response: {response_text[:50]}...")
 							break
 					if response_text:
 						break
 			
+			logger.info(f"[STEP 5/6] Checked {message_count} messages, found response: {bool(response_text)}")
+			
 			if response_text:
+				logger.info(f"[STEP 6/6] Sending response ({len(response_text)} chars) to {conversation_id}")
 				await turn_context.send_activity(response_text)
-				logger.info(f"Sent response ({len(response_text)} chars) to {conversation_id}")
+				logger.info(f"[STEP 6/6] ✓ Response sent successfully")
 			else:
+				logger.warning(f"[STEP 6/6] No assistant response found in {message_count} messages")
 				await turn_context.send_activity("I apologize, but I couldn't generate a response.")
 			
 		except Exception as e:
-			logger.error(f"Error during Azure AI Foundry Agent processing: {e}", exc_info=True)
+			logger.error(f"[ERROR] Exception during Azure AI Foundry Agent processing: {type(e).__name__}: {e}", exc_info=True)
 			await turn_context.send_activity(
 				"An error occurred while processing your message. Please try again later."
 			)
